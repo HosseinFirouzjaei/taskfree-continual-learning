@@ -5,6 +5,3 @@ This project reproduces the synthetic experiment from the paper
 
 ## Goal
 Reproduce Figure 2: compare three methods on a simple 4D task.
-
-## Status
-Day 1: project setup.
