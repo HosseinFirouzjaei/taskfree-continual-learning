@@ -20,10 +20,23 @@ def evaluate(model, X, y):
         accuracy = (predictions == y).float().mean()
     return accuracy.item()
 
+def update_buffer(buffer_X, buffer_y, new_X, new_y, model, max_size):
+    """Keep the hardest (highest-loss) points from the buffer plus the new batch."""
+    all_X = torch.cat([buffer_X, new_X], dim=0)
+    all_y = torch.cat([buffer_y, new_y], dim=0)
 
-def train_online(model, X, y, batch_size=10, lr=0.03, steps_per_batch=5):
-    """Train one small batch at a time. Practice each batch a few times."""
-    model.train()
+    loss_function = nn.CrossEntropyLoss(reduction='none')  # one loss per point
+    model.eval()
+    with torch.no_grad():
+        losses = loss_function(model(all_X), all_y)
+
+    order = torch.argsort(losses, descending=True)   # hardest first
+    keep = order[:max_size]                           # keep the top few
+    return all_X[keep], all_y[keep]
+
+def train_online(model, X, y, buffer_X, buffer_y,
+                 batch_size=10, lr=0.03, steps_per_batch=5, buffer_size=100):
+    """Train one batch at a time, mixing in the hard buffer. Returns the updated buffer."""
     loss_function = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=lr)
 
@@ -31,12 +44,25 @@ def train_online(model, X, y, batch_size=10, lr=0.03, steps_per_batch=5):
         batch_X = X[start:start + batch_size]
         batch_y = y[start:start + batch_size]
 
-        for _ in range(steps_per_batch):       # practice this batch a few times
-            outputs = model(batch_X)
-            loss = loss_function(outputs, batch_y)
+        # train on the new batch PLUS the buffer
+        if len(buffer_X) > 0:
+            train_X = torch.cat([batch_X, buffer_X], dim=0)
+            train_y = torch.cat([batch_y, buffer_y], dim=0)
+        else:
+            train_X, train_y = batch_X, batch_y
+
+        model.train()
+        for _ in range(steps_per_batch):
+            outputs = model(train_X)
+            loss = loss_function(outputs, train_y)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+        # update the buffer with the hardest points
+        buffer_X, buffer_y = update_buffer(buffer_X, buffer_y, batch_X, batch_y, model, buffer_size)
+
+    return buffer_X, buffer_y
 
 
 if __name__ == "__main__":
@@ -65,12 +91,16 @@ if __name__ == "__main__":
 
     model = Net()
 
-    train_online(model, X1, y1)        # learn quadrant 1
+    # one buffer for the whole stream, starts empty
+    buffer_X = torch.empty(0, 4)
+    buffer_y = torch.empty(0, dtype=torch.long)
+
+    buffer_X, buffer_y = train_online(model, X1, y1, buffer_X, buffer_y)   # task 1
     print("After task 1:")
     print("  quadrant 1 accuracy:", evaluate(model, X1_test, y1_test))
     print("  quadrant 2 accuracy:", evaluate(model, X2_test, y2_test))
 
-    train_online(model, X2, y2)        # now learn quadrant 2
+    buffer_X, buffer_y = train_online(model, X2, y2, buffer_X, buffer_y)   # task 2
     print("After task 2:")
     print("  quadrant 1 accuracy:", evaluate(model, X1_test, y1_test))
     print("  quadrant 2 accuracy:", evaluate(model, X2_test, y2_test))
